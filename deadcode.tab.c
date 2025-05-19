@@ -66,26 +66,68 @@
 
 
 /* First part of user prologue.  */
-#line 1 "deadcode.y"
+#line 2 "deadcode.y"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-int  yylex(void);
 void yyerror(const char *s);
+int  yylex(void);
 
+/* ---------- bookkeeping ---------- */
+int found_return = 0;
+
+/* locals */
+int   variable_used[100] = {0};
+char* variable_names[100];
+int   var_count = 0;
+
+/* parameters */
+char* param_names[100];
+int   param_count = 0;
+
+/* calls & decls */
+char* called_funcs[100];
+int   called_count = 0;
+char* func_names[100];
+int   func_decl_count = 0;
+
+/* output buffers */
 FILE *outfile;
+char  stmt_buffer[10000];
 
-/* handy concat helper */
-static char *concat(const char *a, const char *b) {
-    char *res = malloc(strlen(a) + strlen(b) + 1);
-    strcpy(res, a);
-    strcat(res, b);
-    return res;
+typedef struct { char *name; char *text; } FuncBuf;
+FuncBuf funcs[100];
+int     func_buf_cnt = 0;
+
+/* ---------- helpers ---------- */
+void reset_vars(void)
+{
+    for (int i = 0; i < var_count; i++)   free(variable_names[i]);
+    for (int i = 0; i < param_count; i++) free(param_names[i]);
+    var_count = param_count = 0;
+    memset(variable_used, 0, sizeof(variable_used));
+    stmt_buffer[0] = '\0';
+}
+int is_var_used(const char *s)
+{
+    for (int i = 0; i < var_count; i++)
+        if (!strcmp(variable_names[i], s)) { variable_used[i]=1; return 1; }
+    return 0;
+}
+int already_called(const char *s)
+{
+    for (int i = 0; i < called_count; i++)
+        if (!strcmp(called_funcs[i], s)) return 1;
+    return 0;
+}
+void track_call(const char *s)
+{
+    if (!already_called(s)) called_funcs[called_count++] = strdup(s);
 }
 
-#line 89 "deadcode.tab.c"
+#line 131 "deadcode.tab.c"
 
 # ifndef YY_CAST
 #  ifdef __cplusplus
@@ -135,18 +177,18 @@ extern int yydebug;
   {
     IDENTIFIER = 258,
     NUMBER = 259,
-    COMMENT = 260,
-    INT = 261,
-    RETURN = 262,
-    IF = 263,
-    ELSE = 264,
-    WHILE = 265,
-    BREAK = 266,
-    LBRACE = 267,
-    RBRACE = 268,
-    LPAREN = 269,
-    RPAREN = 270,
-    SEMICOLON = 271,
+    INT = 260,
+    RETURN = 261,
+    LBRACE = 262,
+    RBRACE = 263,
+    LPAREN = 264,
+    RPAREN = 265,
+    SEMICOLON = 266,
+    COMMA = 267,
+    PLUS = 268,
+    MINUS = 269,
+    MULT = 270,
+    DIV = 271,
     ASSIGN = 272
   };
 #endif
@@ -155,15 +197,10 @@ extern int yydebug;
 #if ! defined YYSTYPE && ! defined YYSTYPE_IS_DECLARED
 union YYSTYPE
 {
-#line 21 "deadcode.y"
+#line 63 "deadcode.y"
+ char* str; int num; 
 
-    char *str;
-    struct {
-        char *text;
-        int   term;
-    } node;
-
-#line 167 "deadcode.tab.c"
+#line 204 "deadcode.tab.c"
 
 };
 typedef union YYSTYPE YYSTYPE;
@@ -482,16 +519,16 @@ union yyalloc
 /* YYFINAL -- State number of the termination state.  */
 #define YYFINAL  6
 /* YYLAST -- Last index in YYTABLE.  */
-#define YYLAST   51
+#define YYLAST   66
 
 /* YYNTOKENS -- Number of terminals.  */
 #define YYNTOKENS  18
 /* YYNNTS -- Number of nonterminals.  */
-#define YYNNTS  7
+#define YYNNTS  10
 /* YYNRULES -- Number of rules.  */
-#define YYNRULES  19
+#define YYNRULES  26
 /* YYNSTATES -- Number of states.  */
-#define YYNSTATES  56
+#define YYNSTATES  53
 
 #define YYUNDEFTOK  2
 #define YYMAXUTOK   272
@@ -540,8 +577,9 @@ static const yytype_int8 yytranslate[] =
   /* YYRLINE[YYN] -- Source line where rule number YYN was defined.  */
 static const yytype_uint8 yyrline[] =
 {
-       0,    43,    43,    47,    48,    55,    72,    73,    82,    91,
-      98,   105,   112,   119,   121,   128,   140,   155,   170,   171
+       0,    78,    78,    80,    81,    84,   115,   117,   118,   120,
+     121,   123,   126,   132,   146,   158,   160,   170,   171,   172,
+     178,   179,   181,   183,   185,   187,   189
 };
 #endif
 
@@ -550,10 +588,10 @@ static const yytype_uint8 yyrline[] =
    First, the terminals, then, starting at YYNTOKENS, nonterminals.  */
 static const char *const yytname[] =
 {
-  "$end", "error", "$undefined", "IDENTIFIER", "NUMBER", "COMMENT", "INT",
-  "RETURN", "IF", "ELSE", "WHILE", "BREAK", "LBRACE", "RBRACE", "LPAREN",
-  "RPAREN", "SEMICOLON", "ASSIGN", "$accept", "program", "functions",
-  "function", "stmt_block", "stmt", "expression", YY_NULLPTR
+  "$end", "error", "$undefined", "IDENTIFIER", "NUMBER", "INT", "RETURN",
+  "LBRACE", "RBRACE", "LPAREN", "RPAREN", "SEMICOLON", "COMMA", "PLUS",
+  "MINUS", "MULT", "DIV", "ASSIGN", "$accept", "program", "functions",
+  "function", "params", "param", "stmts", "stmt", "args", "expression", YY_NULLPTR
 };
 #endif
 
@@ -567,7 +605,7 @@ static const yytype_int16 yytoknum[] =
 };
 # endif
 
-#define YYPACT_NINF (-13)
+#define YYPACT_NINF (-21)
 
 #define yypact_value_is_default(Yyn) \
   ((Yyn) == YYPACT_NINF)
@@ -581,12 +619,12 @@ static const yytype_int16 yytoknum[] =
      STATE-NUM.  */
 static const yytype_int8 yypact[] =
 {
-      -4,    12,    20,   -13,    -4,     7,   -13,   -13,     8,    10,
-      -2,    -3,    -2,    21,     9,    11,    13,    14,    16,    -2,
-      17,    15,   -13,    19,   -13,   -13,    22,     9,     9,   -13,
-     -13,   -13,    23,    26,    27,   -13,   -13,    29,    30,   -13,
-      31,   -13,    24,    25,    32,    -2,    -2,   -13,    18,    34,
-      33,   -13,    37,    -2,    38,   -13
+       6,     9,    13,   -21,     6,    14,   -21,   -21,    26,    34,
+      33,    41,   -21,    47,    26,    15,   -21,    -7,   -21,    52,
+       0,     0,    48,    15,    19,     0,     0,    46,   -21,    25,
+      12,   -21,   -21,   -21,     0,     0,     0,     0,    49,    36,
+      31,   -21,   -21,   -21,    -8,    -8,   -21,   -21,    50,     0,
+     -21,   -21,   -21
 };
 
   /* YYDEFACT[STATE-NUM] -- Default reduction number in state STATE-NUM.
@@ -594,24 +632,24 @@ static const yytype_int8 yypact[] =
      means the default is an error.  */
 static const yytype_int8 yydefact[] =
 {
-       0,     0,     0,     2,     3,     0,     1,     4,     0,     0,
-       6,     0,     6,     0,     0,     0,     0,     0,     0,     6,
-       0,     0,     8,     0,    18,    19,     0,     0,     0,    13,
-       5,     7,     0,    18,     0,     9,    14,     0,     0,    12,
-       0,    10,     0,     0,     0,     6,     6,    11,     0,     0,
-      15,    17,     0,     6,     0,    16
+       4,     0,     0,     2,     4,     0,     1,     3,     6,     0,
+       0,     7,     9,     0,     6,    10,     8,    20,    21,     0,
+       0,     0,     0,    10,     0,    17,     0,     0,    20,     0,
+       0,     5,    11,    13,     0,     0,     0,     0,     0,    18,
+       0,    15,    12,    26,    22,    23,    24,    25,     0,    17,
+      16,    14,    19
 };
 
   /* YYPGOTO[NTERM-NUM].  */
 static const yytype_int8 yypgoto[] =
 {
-     -13,   -13,    46,   -13,   -12,   -13,   -11
+     -21,   -21,    54,   -21,    51,   -21,    37,   -21,    17,   -20
 };
 
   /* YYDEFGOTO[NTERM-NUM].  */
 static const yytype_int8 yydefgoto[] =
 {
-      -1,     2,     3,     4,    18,    19,    26
+      -1,     2,     3,     4,    10,    11,    22,    23,    38,    24
 };
 
   /* YYTABLE[YYPACT[STATE-NUM]] -- What to do in state STATE-NUM.  If
@@ -619,48 +657,52 @@ static const yytype_int8 yydefgoto[] =
      number is the opposite.  If YYTABLE_NINF, syntax error.  */
 static const yytype_int8 yytable[] =
 {
-      22,    11,     1,    12,    13,    14,    15,    31,    16,    17,
-      34,    20,    24,    25,    21,     5,    37,    38,    33,    25,
-       6,     8,    10,     9,    23,    27,     0,    28,     0,    30,
-      29,    50,    32,    48,    49,    35,    45,    46,    36,    39,
-      40,    54,    52,    41,    42,    43,    44,    51,    47,    53,
-       7,    55
+      29,    30,    25,    28,    18,    39,    40,    36,    37,    21,
+      26,     1,     5,     6,    44,    45,    46,    47,    17,    18,
+      19,    20,    43,     8,    21,    34,    35,    36,    37,    39,
+      33,     9,    34,    35,    36,    37,    42,    12,    34,    35,
+      36,    37,    50,    13,    34,    35,    36,    37,    49,    34,
+      35,    36,    37,    14,    15,    27,    31,    41,     7,    48,
+      32,    51,     0,     0,     0,    16,    52
 };
 
 static const yytype_int8 yycheck[] =
 {
-      12,     3,     6,     5,     6,     7,     8,    19,    10,    11,
-      21,    14,     3,     4,    17,     3,    27,    28,     3,     4,
-       0,    14,    12,    15,     3,    14,    -1,    14,    -1,    13,
-      16,    13,    15,    45,    46,    16,    12,    12,    16,    16,
-      14,    53,     9,    16,    15,    15,    15,    13,    16,    12,
-       4,    13
+      20,    21,     9,     3,     4,    25,    26,    15,    16,     9,
+      17,     5,     3,     0,    34,    35,    36,    37,     3,     4,
+       5,     6,    10,     9,     9,    13,    14,    15,    16,    49,
+      11,     5,    13,    14,    15,    16,    11,     3,    13,    14,
+      15,    16,    11,    10,    13,    14,    15,    16,    12,    13,
+      14,    15,    16,    12,     7,     3,     8,    11,     4,    10,
+      23,    11,    -1,    -1,    -1,    14,    49
 };
 
   /* YYSTOS[STATE-NUM] -- The (internal number of the) accessing
      symbol of state STATE-NUM.  */
 static const yytype_int8 yystos[] =
 {
-       0,     6,    19,    20,    21,     3,     0,    20,    14,    15,
-      12,     3,     5,     6,     7,     8,    10,    11,    22,    23,
-      14,    17,    22,     3,     3,     4,    24,    14,    14,    16,
-      13,    22,    15,     3,    24,    16,    16,    24,    24,    16,
-      14,    16,    15,    15,    15,    12,    12,    16,    22,    22,
-      13,    13,     9,    12,    22,    13
+       0,     5,    19,    20,    21,     3,     0,    20,     9,     5,
+      22,    23,     3,    10,    12,     7,    22,     3,     4,     5,
+       6,     9,    24,    25,    27,     9,    17,     3,     3,    27,
+      27,     8,    24,    11,    13,    14,    15,    16,    26,    27,
+      27,    11,    11,    10,    27,    27,    27,    27,    10,    12,
+      11,    11,    26
 };
 
   /* YYR1[YYN] -- Symbol number of symbol that rule YYN derives.  */
 static const yytype_int8 yyr1[] =
 {
        0,    18,    19,    20,    20,    21,    22,    22,    22,    23,
-      23,    23,    23,    23,    23,    23,    23,    23,    24,    24
+      24,    24,    25,    25,    25,    25,    25,    26,    26,    26,
+      27,    27,    27,    27,    27,    27,    27
 };
 
   /* YYR2[YYN] -- Number of symbols on the right hand side of rule YYN.  */
 static const yytype_int8 yyr2[] =
 {
-       0,     2,     1,     1,     2,     7,     0,     2,     2,     3,
-       4,     6,     4,     2,     3,     7,    11,     7,     1,     1
+       0,     2,     1,     2,     0,     8,     0,     1,     3,     2,
+       0,     2,     3,     2,     5,     3,     4,     0,     1,     3,
+       1,     1,     3,     3,     3,     3,     3
 };
 
 
@@ -1355,200 +1397,179 @@ yyreduce:
   YY_REDUCE_PRINT (yyn);
   switch (yyn)
     {
-  case 2:
-#line 43 "deadcode.y"
-                              { fprintf(outfile,"%s",(yyvsp[0].str)); free((yyvsp[0].str)); }
-#line 1362 "deadcode.tab.c"
-    break;
-
-  case 3:
-#line 47 "deadcode.y"
-                              { (yyval.str) = (yyvsp[0].str); }
-#line 1368 "deadcode.tab.c"
-    break;
-
-  case 4:
-#line 48 "deadcode.y"
-                              {
-            (yyval.str) = concat((yyvsp[-1].str), (yyvsp[0].str));
-            free((yyvsp[-1].str)); free((yyvsp[0].str));
-        }
-#line 1377 "deadcode.tab.c"
-    break;
-
   case 5:
-#line 56 "deadcode.y"
-        {
-            char *hdr = concat("int ", (yyvsp[-5].str));
-            char *sig = concat(hdr, "() {\n");
-            free(hdr);
-            char *body = concat(sig, (yyvsp[-1].str));
-            free(sig); free((yyvsp[-1].str));
-            char *full = concat(body, "}\n\n");
-            free(body);
-            (yyval.str) = full;
-            free((yyvsp[-5].str));
-        }
-#line 1393 "deadcode.tab.c"
-    break;
+#line 85 "deadcode.y"
+    {
+        /* ---- build pretty body ---- */
+        size_t cap = strlen(stmt_buffer)+4096;
+        char *pretty = malloc(cap);
 
-  case 6:
-#line 72 "deadcode.y"
-                             { (yyval.str) = strdup(""); }
-#line 1399 "deadcode.tab.c"
-    break;
-
-  case 7:
-#line 73 "deadcode.y"
-                             {
-            if ((yyvsp[-1].node).term) {
-                (yyval.str) = concat((yyvsp[-1].node).text, "");
-                free((yyvsp[-1].node).text); free((yyvsp[0].str));
-            } else {
-                (yyval.str) = concat((yyvsp[-1].node).text, (yyvsp[0].str));
-                free((yyvsp[-1].node).text); free((yyvsp[0].str));
-            }
+        snprintf(pretty,cap,"int %s(", (yyvsp[-6].str));
+        for(int i=0;i<param_count;i++){
+            if(i) strcat(pretty,", ");
+            strcat(pretty,"int "); strcat(pretty,param_names[i]);
         }
-#line 1413 "deadcode.tab.c"
-    break;
+        strcat(pretty,") {\n");
 
-  case 8:
-#line 82 "deadcode.y"
-                             {
-            char *tmp = malloc(strlen((yyvsp[-1].str)) + 8);
-            sprintf(tmp, "    %s\n", (yyvsp[-1].str));
-            (yyval.str) = concat(tmp, (yyvsp[0].str));
-            free(tmp); free((yyvsp[-1].str)); free((yyvsp[0].str));
+        for(int i=0;i<var_count;i++){
+            if(variable_used[i]){
+                strcat(pretty,"    int "); strcat(pretty,variable_names[i]);
+                strcat(pretty,";\n");
+            }else printf("🔴 Dead variable: %s\n",variable_names[i]);
         }
-#line 1424 "deadcode.tab.c"
+        for(int i=0;i<param_count;i++)
+            if(!strstr(stmt_buffer,param_names[i]))
+                printf("🔴 Dead parameter: %s\n",param_names[i]);
+
+        strcat(pretty,stmt_buffer); strcat(pretty,"}\n\n");
+
+        funcs[func_buf_cnt].name=strdup((yyvsp[-6].str));
+        funcs[func_buf_cnt].text=pretty; func_buf_cnt++;
+
+        free((yyvsp[-6].str)); reset_vars(); found_return=0;
+    }
+#line 1432 "deadcode.tab.c"
     break;
 
   case 9:
-#line 92 "deadcode.y"
-        {
-            char buf[256];
-            snprintf(buf,sizeof(buf), "    int %s;\n", (yyvsp[-1].str));
-            (yyval.node).text = strdup(buf); (yyval.node).term = 0;
-            free((yyvsp[-1].str));
-        }
-#line 1435 "deadcode.tab.c"
-    break;
-
-  case 10:
-#line 99 "deadcode.y"
-        {
-            char buf[256];
-            snprintf(buf,sizeof(buf), "    %s = %s;\n", (yyvsp[-3].str), (yyvsp[-1].str));
-            (yyval.node).text = strdup(buf); (yyval.node).term = 0;
-            free((yyvsp[-3].str)); free((yyvsp[-1].str));
-        }
-#line 1446 "deadcode.tab.c"
-    break;
-
-  case 11:
-#line 106 "deadcode.y"
-        {
-            char buf[256];
-            snprintf(buf,sizeof(buf), "    %s = %s();\n", (yyvsp[-5].str), (yyvsp[-3].str));
-            (yyval.node).text = strdup(buf); (yyval.node).term = 0;
-            free((yyvsp[-5].str)); free((yyvsp[-3].str));
-        }
-#line 1457 "deadcode.tab.c"
+#line 120 "deadcode.y"
+                           { param_names[param_count++]=(yyvsp[0].str); }
+#line 1438 "deadcode.tab.c"
     break;
 
   case 12:
-#line 113 "deadcode.y"
+#line 127 "deadcode.y"
         {
-            char buf[256];
-            snprintf(buf,sizeof(buf), "    %s();\n", (yyvsp[-3].str));
-            (yyval.node).text = strdup(buf); (yyval.node).term = 0;
-            free((yyvsp[-3].str));
+            found_return=1;
+            strcat(stmt_buffer,"    return "); strcat(stmt_buffer,(yyvsp[-1].str));
+            strcat(stmt_buffer,";\n"); free((yyvsp[-1].str));
         }
-#line 1468 "deadcode.tab.c"
+#line 1448 "deadcode.tab.c"
     break;
 
   case 13:
-#line 120 "deadcode.y"
-        { (yyval.node).text = strdup("    break;\n"); (yyval.node).term = 1; }
-#line 1474 "deadcode.tab.c"
+#line 133 "deadcode.y"
+        {
+            /* identifier-only? */
+            int id_only = strspn((yyvsp[-1].str),
+              "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_0123456789")
+              == strlen((yyvsp[-1].str));
+
+            if(id_only){
+                is_var_used((yyvsp[-1].str));   /* mark live, but **do NOT emit** */
+            }else{
+                printf("🔴 Dead expression: %s\n",(yyvsp[-1].str));
+            }
+            free((yyvsp[-1].str));
+        }
+#line 1466 "deadcode.tab.c"
     break;
 
   case 14:
-#line 122 "deadcode.y"
+#line 147 "deadcode.y"
         {
-            char buf[256];
-            snprintf(buf,sizeof(buf), "    return %s;\n", (yyvsp[-1].str));
-            (yyval.node).text = strdup(buf); (yyval.node).term = 1;
-            free((yyvsp[-1].str));
+            if(found_return)
+                printf("⚠️ Unreachable code: function call after return\n");
+            else{
+                track_call((yyvsp[-4].str));
+                strcat(stmt_buffer,"    "); strcat(stmt_buffer,(yyvsp[-4].str));
+                strcat(stmt_buffer,"(");  strcat(stmt_buffer,(yyvsp[-2].str));
+                strcat(stmt_buffer,");\n");
+            }
+            free((yyvsp[-4].str)); free((yyvsp[-2].str));
         }
-#line 1485 "deadcode.tab.c"
+#line 1482 "deadcode.tab.c"
     break;
 
   case 15:
-#line 129 "deadcode.y"
-        {
-            if (!strcmp((yyvsp[-4].str),"0")) {
-                printf("dead if: if(0) block removed\n");
-                (yyval.node).text = strdup(""); (yyval.node).term = 0;
-            } else {
-                char *tmp = malloc(strlen((yyvsp[-4].str))+strlen((yyvsp[-1].str))+32);
-                sprintf(tmp,"    if (%s) {\n%s    }\n",(yyvsp[-4].str),(yyvsp[-1].str));
-                (yyval.node).text = tmp; (yyval.node).term = 0;
-            }
-            free((yyvsp[-4].str)); free((yyvsp[-1].str));
-        }
-#line 1501 "deadcode.tab.c"
+#line 159 "deadcode.y"
+        { variable_names[var_count]=(yyvsp[-1].str); variable_used[var_count++]=0; }
+#line 1488 "deadcode.tab.c"
     break;
 
   case 16:
-#line 141 "deadcode.y"
+#line 161 "deadcode.y"
         {
-            if (!strcmp((yyvsp[-8].str),"0")) {
-                printf("dead if: if(0) block removed\n");
-                (yyval.node).text = strdup((yyvsp[-1].str)); (yyval.node).term = 0;
-            } else if (!strcmp((yyvsp[-8].str),"1")) {
-                printf("dead else: else block removed due to if(1)\n");
-                (yyval.node).text = strdup((yyvsp[-5].str));  (yyval.node).term = 0;
-            } else {
-                char *tmp = malloc(strlen((yyvsp[-8].str))+strlen((yyvsp[-5].str))+strlen((yyvsp[-1].str))+64);
-                sprintf(tmp,"    if (%s) {\n%s    } else {\n%s    }\n",(yyvsp[-8].str),(yyvsp[-5].str),(yyvsp[-1].str));
-                (yyval.node).text = tmp; (yyval.node).term = 0;
-            }
-            free((yyvsp[-8].str)); free((yyvsp[-5].str)); free((yyvsp[-1].str));
+            is_var_used((yyvsp[-3].str));
+            strcat(stmt_buffer,"    "); strcat(stmt_buffer,(yyvsp[-3].str));
+            strcat(stmt_buffer," = ");  strcat(stmt_buffer,(yyvsp[-1].str));
+            strcat(stmt_buffer,";\n");
+            free((yyvsp[-3].str)); free((yyvsp[-1].str));
         }
-#line 1520 "deadcode.tab.c"
+#line 1500 "deadcode.tab.c"
     break;
 
   case 17:
-#line 156 "deadcode.y"
-        {
-            if (!strcmp((yyvsp[-4].str),"0")) {
-                printf("dead while: while(0) loop removed\n");
-                (yyval.node).text = strdup(""); (yyval.node).term = 0;
-            } else {
-                char *tmp = malloc(strlen((yyvsp[-4].str))+strlen((yyvsp[-1].str))+32);
-                sprintf(tmp,"    while (%s) {\n%s    }\n",(yyvsp[-4].str),(yyvsp[-1].str));
-                (yyval.node).text = tmp; (yyval.node).term = 0;
-            }
-            free((yyvsp[-4].str)); free((yyvsp[-1].str));
-        }
-#line 1536 "deadcode.tab.c"
+#line 170 "deadcode.y"
+                            { (yyval.str)=strdup(""); }
+#line 1506 "deadcode.tab.c"
     break;
 
   case 18:
-#line 170 "deadcode.y"
-                           { (yyval.str) = strdup((yyvsp[0].str)); free((yyvsp[0].str)); }
-#line 1542 "deadcode.tab.c"
+#line 171 "deadcode.y"
+                            { (yyval.str)=(yyvsp[0].str); }
+#line 1512 "deadcode.tab.c"
     break;
 
   case 19:
-#line 171 "deadcode.y"
-                           { (yyval.str) = strdup((yyvsp[0].str)); free((yyvsp[0].str)); }
+#line 172 "deadcode.y"
+                            {
+            char buf[2048]; snprintf(buf,sizeof(buf),"%s, %s",(yyvsp[-2].str),(yyvsp[0].str));
+            free((yyvsp[-2].str)); free((yyvsp[0].str)); (yyval.str)=strdup(buf);
+        }
+#line 1521 "deadcode.tab.c"
+    break;
+
+  case 20:
+#line 178 "deadcode.y"
+                            { is_var_used((yyvsp[0].str)); (yyval.str)=(yyvsp[0].str); }
+#line 1527 "deadcode.tab.c"
+    break;
+
+  case 21:
+#line 179 "deadcode.y"
+                            { char buf[64]; snprintf(buf,sizeof(buf),"%d",(yyvsp[0].num));
+                               (yyval.str)=strdup(buf); }
+#line 1534 "deadcode.tab.c"
+    break;
+
+  case 22:
+#line 181 "deadcode.y"
+                                  { char buf[2048];
+          snprintf(buf,sizeof(buf),"%s + %s",(yyvsp[-2].str),(yyvsp[0].str)); free((yyvsp[-2].str));free((yyvsp[0].str)); (yyval.str)=strdup(buf);}
+#line 1541 "deadcode.tab.c"
+    break;
+
+  case 23:
+#line 183 "deadcode.y"
+                                  { char buf[2048];
+          snprintf(buf,sizeof(buf),"%s - %s",(yyvsp[-2].str),(yyvsp[0].str)); free((yyvsp[-2].str));free((yyvsp[0].str)); (yyval.str)=strdup(buf);}
 #line 1548 "deadcode.tab.c"
     break;
 
+  case 24:
+#line 185 "deadcode.y"
+                                  { char buf[2048];
+          snprintf(buf,sizeof(buf),"%s * %s",(yyvsp[-2].str),(yyvsp[0].str)); free((yyvsp[-2].str));free((yyvsp[0].str)); (yyval.str)=strdup(buf);}
+#line 1555 "deadcode.tab.c"
+    break;
 
-#line 1552 "deadcode.tab.c"
+  case 25:
+#line 187 "deadcode.y"
+                                  { char buf[2048];
+          snprintf(buf,sizeof(buf),"%s / %s",(yyvsp[-2].str),(yyvsp[0].str)); free((yyvsp[-2].str));free((yyvsp[0].str)); (yyval.str)=strdup(buf);}
+#line 1562 "deadcode.tab.c"
+    break;
+
+  case 26:
+#line 189 "deadcode.y"
+                                  { char buf[2048];
+          snprintf(buf,sizeof(buf),"(%s)",(yyvsp[-1].str)); free((yyvsp[-1].str)); (yyval.str)=strdup(buf);}
+#line 1569 "deadcode.tab.c"
+    break;
+
+
+#line 1573 "deadcode.tab.c"
 
       default: break;
     }
@@ -1780,21 +1801,27 @@ yyreturn:
 #endif
   return yyresult;
 }
-#line 174 "deadcode.y"
+#line 192 "deadcode.y"
+ /* ---------- code section ---------- */
 
-
-void yyerror(const char *s) { fprintf(stderr,"Syntax Error: %s\n",s); }
+void yyerror(const char *s){ fprintf(stderr,"Syntax Error: %s\n",s); }
 
 int main(void)
 {
-    outfile = fopen("output.c","w");
-    if (!outfile) { perror("output.c"); return 1; }
+    outfile=fopen("output.c","w");
+    if(!outfile){ perror("fopen"); return 1; }
 
-    if (yyparse()==0)
-        fprintf(stderr,"Parsing and dead-code removal successful\n");
-    else
-        fprintf(stderr,"Parsing failed\n");
+    yyparse();                        /* parse once */
 
+    /* post-pass: emit only live funcs */
+    for(int i=0;i<func_buf_cnt;i++){
+        int live = !strcmp(funcs[i].name,"main") || already_called(funcs[i].name);
+        if(!live){
+            printf("🔴 Dead function: %s\n",funcs[i].name);
+            continue;
+        }
+        fputs(funcs[i].text,outfile);
+    }
     fclose(outfile);
     return 0;
 }

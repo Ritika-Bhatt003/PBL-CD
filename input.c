@@ -1,40 +1,23 @@
+int forgotten(int a, int b) {
+    int x;
+    int y;
+    return a + b;
+}
+
+int helper(int p, int q) {
+    int tmp;
+    int used;
+    used = p * q;
+    return used;
+    helper(p, q);
+}
+
 int main() {
     int a;
-    a = 10;
-    // efhowurnf
-
-    /*kfdjvn
-    lfjvnelfk
-    jfv*/
-
-    if (0) {
-        a = 100;
-    } else {
-        a = 200; // ygi
-    }
-
-    if (1) {
-        a = 300;
-    } else {
-        a = 400;
-    }
-
-    if (a) {
-        a = 500;
-    } else {
-        a = 600;
-    }
-
-    while (1) {
-        a = 700;
-        break;
-        a = 800;
-    }
-     while (0) {
-        a = 800;
-    }
-
-
-    return a;
-    a= 900;
+    int b;
+    b = 5;
+    (1 + 2) * (3 - 4);
+    helper(b, 10);
+    b;
+    return 0;
 }

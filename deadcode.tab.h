@@ -51,18 +51,18 @@ extern int yydebug;
   {
     IDENTIFIER = 258,
     NUMBER = 259,
-    COMMENT = 260,
-    INT = 261,
-    RETURN = 262,
-    IF = 263,
-    ELSE = 264,
-    WHILE = 265,
-    BREAK = 266,
-    LBRACE = 267,
-    RBRACE = 268,
-    LPAREN = 269,
-    RPAREN = 270,
-    SEMICOLON = 271,
+    INT = 260,
+    RETURN = 261,
+    LBRACE = 262,
+    RBRACE = 263,
+    LPAREN = 264,
+    RPAREN = 265,
+    SEMICOLON = 266,
+    COMMA = 267,
+    PLUS = 268,
+    MINUS = 269,
+    MULT = 270,
+    DIV = 271,
     ASSIGN = 272
   };
 #endif
@@ -71,15 +71,10 @@ extern int yydebug;
 #if ! defined YYSTYPE && ! defined YYSTYPE_IS_DECLARED
 union YYSTYPE
 {
-#line 21 "deadcode.y"
+#line 63 "deadcode.y"
+ char* str; int num; 
 
-    char *str;
-    struct {
-        char *text;
-        int   term;
-    } node;
-
-#line 83 "deadcode.tab.h"
+#line 78 "deadcode.tab.h"
 
 };
 typedef union YYSTYPE YYSTYPE;

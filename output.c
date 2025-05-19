@@ -1,22 +1,13 @@
+int helper(int p, int q) {
+    int used;
+    used = p * q;
+    return used;
+}
+
 int main() {
-    int a;
-    a = 10;
-    // efhowurnf
-    /*kfdjvn
-    lfjvnelfk
-    jfv*/
-    a = 200;
-    // ygi
-    a = 300;
-    if (a) {
-    a = 500;
-    } else {
-    a = 600;
-    }
-    while (1) {
-    a = 700;
-    break;
-    }
-    return a;
+    int b;
+    b = 5;
+    helper(b, 10);
+    return 0;
 }
 

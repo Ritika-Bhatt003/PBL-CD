@@ -1,190 +1,214 @@
+/* deadcode.y */
 %{
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-int  yylex(void);
 void yyerror(const char *s);
+int  yylex(void);
 
+/* ---------- bookkeeping ---------- */
+int found_return = 0;
+
+/* locals */
+int   variable_used[100] = {0};
+char* variable_names[100];
+int   var_count = 0;
+
+/* parameters */
+char* param_names[100];
+int   param_count = 0;
+
+/* calls & decls */
+char* called_funcs[100];
+int   called_count = 0;
+char* func_names[100];
+int   func_decl_count = 0;
+
+/* output buffers */
 FILE *outfile;
+char  stmt_buffer[10000];
 
-/* handy concat helper */
-static char *concat(const char *a, const char *b) {
-    char *res = malloc(strlen(a) + strlen(b) + 1);
-    strcpy(res, a);
-    strcat(res, b);
-    return res;
+typedef struct { char *name; char *text; } FuncBuf;
+FuncBuf funcs[100];
+int     func_buf_cnt = 0;
+
+/* ---------- helpers ---------- */
+void reset_vars(void)
+{
+    for (int i = 0; i < var_count; i++)   free(variable_names[i]);
+    for (int i = 0; i < param_count; i++) free(param_names[i]);
+    var_count = param_count = 0;
+    memset(variable_used, 0, sizeof(variable_used));
+    stmt_buffer[0] = '\0';
+}
+int is_var_used(const char *s)
+{
+    for (int i = 0; i < var_count; i++)
+        if (!strcmp(variable_names[i], s)) { variable_used[i]=1; return 1; }
+    return 0;
+}
+int already_called(const char *s)
+{
+    for (int i = 0; i < called_count; i++)
+        if (!strcmp(called_funcs[i], s)) return 1;
+    return 0;
+}
+void track_call(const char *s)
+{
+    if (!already_called(s)) called_funcs[called_count++] = strdup(s);
 }
 %}
 
-/* ---------- value types ---------- */
-%union {
-    char *str;
-    struct {
-        char *text;
-        int   term;
-    } node;
-}
+%union { char* str; int num; }
 
-/* ---------- tokens ---------- */
-%token <str> IDENTIFIER NUMBER COMMENT
-%token INT RETURN IF ELSE WHILE BREAK
-%token LBRACE RBRACE LPAREN RPAREN SEMICOLON ASSIGN
+%token <str> IDENTIFIER
+%token <num> NUMBER
+%token INT RETURN LBRACE RBRACE LPAREN RPAREN SEMICOLON COMMA
+%token PLUS MINUS MULT DIV ASSIGN
 
-/* ---------- non-terminal value types ---------- */
-%type <str>  program functions function
-%type <str>  stmt_block
-%type <node> stmt
-%type <str>  expression
+%left  PLUS MINUS
+%left  MULT DIV
+%right ASSIGN
 
-%%
+%type <str> expression args
 
-program
-    : functions               { fprintf(outfile,"%s",$1); free($1); }
+%% /* ---------- grammar ---------- */
+
+program   : functions ;
+functions :
+      function functions
+    | /* empty */
     ;
+function  :
+    INT IDENTIFIER LPAREN params RPAREN LBRACE stmts RBRACE
+    {
+        /* ---- build pretty body ---- */
+        size_t cap = strlen(stmt_buffer)+4096;
+        char *pretty = malloc(cap);
 
-functions
-    : function                { $$ = $1; }
-    | function functions      {
-            $$ = concat($1, $2);
-            free($1); free($2);
+        snprintf(pretty,cap,"int %s(", $2);
+        for(int i=0;i<param_count;i++){
+            if(i) strcat(pretty,", ");
+            strcat(pretty,"int "); strcat(pretty,param_names[i]);
         }
-    ;
+        strcat(pretty,") {\n");
 
-function
-    : INT IDENTIFIER LPAREN RPAREN LBRACE stmt_block RBRACE
+        for(int i=0;i<var_count;i++){
+            if(variable_used[i]){
+                strcat(pretty,"    int "); strcat(pretty,variable_names[i]);
+                strcat(pretty,";\n");
+            }else printf("🔴 Dead variable: %s\n",variable_names[i]);
+        }
+        for(int i=0;i<param_count;i++)
+            if(!strstr(stmt_buffer,param_names[i]))
+                printf("🔴 Dead parameter: %s\n",param_names[i]);
+
+        strcat(pretty,stmt_buffer); strcat(pretty,"}\n\n");
+
+        funcs[func_buf_cnt].name=strdup($2);
+        funcs[func_buf_cnt].text=pretty; func_buf_cnt++;
+
+        free($2); reset_vars(); found_return=0;
+    }
+    ;
+params    :
+      /* empty */
+    | param
+    | param COMMA params
+    ;
+param     : INT IDENTIFIER { param_names[param_count++]=$2; };
+stmts     :
+      /* empty */
+    | stmt stmts
+    ;
+stmt      :
+      RETURN expression SEMICOLON
         {
-            char *hdr = concat("int ", $2);
-            char *sig = concat(hdr, "() {\n");
-            free(hdr);
-            char *body = concat(sig, $6);
-            free(sig); free($6);
-            char *full = concat(body, "}\n\n");
-            free(body);
-            $$ = full;
-            free($2);
+            found_return=1;
+            strcat(stmt_buffer,"    return "); strcat(stmt_buffer,$2);
+            strcat(stmt_buffer,";\n"); free($2);
         }
-    ;
+    | expression SEMICOLON                /* <-- MODIFIED */
+        {
+            /* identifier-only? */
+            int id_only = strspn($1,
+              "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_0123456789")
+              == strlen($1);
 
-/* ---------------- TRIMMING UNREACHABLE CODE ---------------- */
-
-stmt_block
-    : /* empty */            { $$ = strdup(""); }
-    | stmt stmt_block        {
-            if ($1.term) {
-                $$ = concat($1.text, "");
-                free($1.text); free($2);
-            } else {
-                $$ = concat($1.text, $2);
-                free($1.text); free($2);
+            if(id_only){
+                is_var_used($1);   /* mark live, but **do NOT emit** */
+            }else{
+                printf("🔴 Dead expression: %s\n",$1);
             }
-        }
-    | COMMENT stmt_block     {
-            char *tmp = malloc(strlen($1) + 8);
-            sprintf(tmp, "    %s\n", $1);
-            $$ = concat(tmp, $2);
-            free(tmp); free($1); free($2);
-        }
-    ;
-
-stmt
-    : INT IDENTIFIER SEMICOLON
-        {
-            char buf[256];
-            snprintf(buf,sizeof(buf), "    int %s;\n", $2);
-            $$.text = strdup(buf); $$.term = 0;
-            free($2);
-        }
-    | IDENTIFIER ASSIGN expression SEMICOLON
-        {
-            char buf[256];
-            snprintf(buf,sizeof(buf), "    %s = %s;\n", $1, $3);
-            $$.text = strdup(buf); $$.term = 0;
-            free($1); free($3);
-        }
-    | IDENTIFIER ASSIGN IDENTIFIER LPAREN RPAREN SEMICOLON
-        {
-            char buf[256];
-            snprintf(buf,sizeof(buf), "    %s = %s();\n", $1, $3);
-            $$.text = strdup(buf); $$.term = 0;
-            free($1); free($3);
-        }
-    | IDENTIFIER LPAREN RPAREN SEMICOLON
-        {
-            char buf[256];
-            snprintf(buf,sizeof(buf), "    %s();\n", $1);
-            $$.text = strdup(buf); $$.term = 0;
             free($1);
         }
-    | BREAK SEMICOLON
-        { $$.text = strdup("    break;\n"); $$.term = 1; }
-    | RETURN expression SEMICOLON
+    | IDENTIFIER LPAREN args RPAREN SEMICOLON
         {
-            char buf[256];
-            snprintf(buf,sizeof(buf), "    return %s;\n", $2);
-            $$.text = strdup(buf); $$.term = 1;
-            free($2);
-        }
-    | IF LPAREN expression RPAREN LBRACE stmt_block RBRACE
-        {
-            if (!strcmp($3,"0")) {
-                printf("dead if: if(0) block removed\n");
-                $$.text = strdup(""); $$.term = 0;
-            } else {
-                char *tmp = malloc(strlen($3)+strlen($6)+32);
-                sprintf(tmp,"    if (%s) {\n%s    }\n",$3,$6);
-                $$.text = tmp; $$.term = 0;
+            if(found_return)
+                printf("⚠️ Unreachable code: function call after return\n");
+            else{
+                track_call($1);
+                strcat(stmt_buffer,"    "); strcat(stmt_buffer,$1);
+                strcat(stmt_buffer,"(");  strcat(stmt_buffer,$3);
+                strcat(stmt_buffer,");\n");
             }
-            free($3); free($6);
+            free($1); free($3);
         }
-    | IF LPAREN expression RPAREN LBRACE stmt_block RBRACE ELSE LBRACE stmt_block RBRACE
+    | INT IDENTIFIER SEMICOLON
+        { variable_names[var_count]=$2; variable_used[var_count++]=0; }
+    | IDENTIFIER ASSIGN expression SEMICOLON
         {
-            if (!strcmp($3,"0")) {
-                printf("dead if: if(0) block removed\n");
-                $$.text = strdup($10); $$.term = 0;
-            } else if (!strcmp($3,"1")) {
-                printf("dead else: else block removed due to if(1)\n");
-                $$.text = strdup($6);  $$.term = 0;
-            } else {
-                char *tmp = malloc(strlen($3)+strlen($6)+strlen($10)+64);
-                sprintf(tmp,"    if (%s) {\n%s    } else {\n%s    }\n",$3,$6,$10);
-                $$.text = tmp; $$.term = 0;
-            }
-            free($3); free($6); free($10);
-        }
-    | WHILE LPAREN expression RPAREN LBRACE stmt_block RBRACE
-        {
-            if (!strcmp($3,"0")) {
-                printf("dead while: while(0) loop removed\n");
-                $$.text = strdup(""); $$.term = 0;
-            } else {
-                char *tmp = malloc(strlen($3)+strlen($6)+32);
-                sprintf(tmp,"    while (%s) {\n%s    }\n",$3,$6);
-                $$.text = tmp; $$.term = 0;
-            }
-            free($3); free($6);
+            is_var_used($1);
+            strcat(stmt_buffer,"    "); strcat(stmt_buffer,$1);
+            strcat(stmt_buffer," = ");  strcat(stmt_buffer,$3);
+            strcat(stmt_buffer,";\n");
+            free($1); free($3);
         }
     ;
-
-expression
-    : IDENTIFIER           { $$ = strdup($1); free($1); }
-    | NUMBER               { $$ = strdup($1); free($1); }
+args      :
+      /* empty */           { $$=strdup(""); }
+    | expression            { $$=$1; }
+    | expression COMMA args {
+            char buf[2048]; snprintf(buf,sizeof(buf),"%s, %s",$1,$3);
+            free($1); free($3); $$=strdup(buf);
+        }
     ;
+expression:
+      IDENTIFIER            { is_var_used($1); $$=$1; }
+    | NUMBER                { char buf[64]; snprintf(buf,sizeof(buf),"%d",$1);
+                               $$=strdup(buf); }
+    | expression PLUS  expression { char buf[2048];
+          snprintf(buf,sizeof(buf),"%s + %s",$1,$3); free($1);free($3); $$=strdup(buf);}
+    | expression MINUS expression { char buf[2048];
+          snprintf(buf,sizeof(buf),"%s - %s",$1,$3); free($1);free($3); $$=strdup(buf);}
+    | expression MULT  expression { char buf[2048];
+          snprintf(buf,sizeof(buf),"%s * %s",$1,$3); free($1);free($3); $$=strdup(buf);}
+    | expression DIV   expression { char buf[2048];
+          snprintf(buf,sizeof(buf),"%s / %s",$1,$3); free($1);free($3); $$=strdup(buf);}
+    | LPAREN expression RPAREN    { char buf[2048];
+          snprintf(buf,sizeof(buf),"(%s)",$2); free($2); $$=strdup(buf);}
+    ;
+%% /* ---------- code section ---------- */
 
-%%
-
-void yyerror(const char *s) { fprintf(stderr,"Syntax Error: %s\n",s); }
+void yyerror(const char *s){ fprintf(stderr,"Syntax Error: %s\n",s); }
 
 int main(void)
 {
-    outfile = fopen("output.c","w");
-    if (!outfile) { perror("output.c"); return 1; }
+    outfile=fopen("output.c","w");
+    if(!outfile){ perror("fopen"); return 1; }
 
-    if (yyparse()==0)
-        fprintf(stderr,"Parsing and dead-code removal successful\n");
-    else
-        fprintf(stderr,"Parsing failed\n");
+    yyparse();                        /* parse once */
 
+    /* post-pass: emit only live funcs */
+    for(int i=0;i<func_buf_cnt;i++){
+        int live = !strcmp(funcs[i].name,"main") || already_called(funcs[i].name);
+        if(!live){
+            printf("🔴 Dead function: %s\n",funcs[i].name);
+            continue;
+        }
+        fputs(funcs[i].text,outfile);
+    }
     fclose(outfile);
     return 0;
 }
